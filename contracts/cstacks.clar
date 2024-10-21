@@ -149,24 +149,32 @@
     )
 )
 
+(define-private (handle-refund (project-id uint))
+    (let ((project (unwrap! (map-get? projects project-id) ERR_PROJECT_NOT_FOUND)))
+        (if (< (get milestones-met project) (get milestones project))
+            (let ((contribution (unwrap! (map-get? contributions {project-id: project-id, funder: tx-sender}) ERR_PROJECT_FAILED)))
+                (begin
+                    (try! (stx-transfer? contribution (get creator project) tx-sender))
+                    (map-set projects project-id 
+                        (merge project {
+                            status: STATUS-REFUNDED,
+                            refunded: true
+                        }))
+                    (ok true)
+                )
+            )
+            (ok false)
+        )
+    )
+)
+
 (define-public (refund (project-id uint))
     (begin
         (asserts! (is-valid-project-id project-id) ERR_INVALID_PROJECT_ID)
         (let ((project (unwrap! (map-get? projects project-id) ERR_PROJECT_NOT_FOUND)))
-            (asserts! (is-eq (get status project) STATUS-ACTIVE) ERR_INVALID_STATUS)
-            (if (< (get milestones-met project) (get milestones project))
-                (let ((contribution (unwrap! (map-get? contributions {project-id: project-id, funder: tx-sender}) ERR_PROJECT_FAILED)))
-                    (begin
-                        (try! (stx-transfer? contribution (get creator project) tx-sender))
-                        (map-set projects project-id 
-                            (merge project {
-                                status: STATUS-REFUNDED,
-                                refunded: true
-                            }))
-                        (ok true)
-                    )
-                )
-                (ok false)
+            (if (is-eq (get status project) STATUS-ACTIVE)
+                (handle-refund project-id)
+                ERR_INVALID_STATUS
             )
         )
     )
