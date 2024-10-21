@@ -1,5 +1,10 @@
 ;; CrowdStacks Smart Contract
 
+;; Define project status values
+(define-constant STATUS-ACTIVE u1)
+(define-constant STATUS-COMPLETED u2)
+(define-constant STATUS-REFUNDED u3)
+
 (define-map projects 
     uint 
     {
@@ -7,7 +12,8 @@
         goal: uint, 
         funds-raised: uint, 
         milestones: uint, 
-        milestones-met: uint, 
+        milestones-met: uint,
+        status: uint,
         refunded: bool
     })
 
@@ -30,6 +36,7 @@
 (define-constant ERR_INVALID_MILESTONES (err u106))
 (define-constant ERR_INVALID_AMOUNT (err u107))
 (define-constant ERR_INVALID_PROJECT_ID (err u108))
+(define-constant ERR_INVALID_STATUS (err u109))
 
 ;; Helper functions for validation
 (define-private (is-valid-goal (goal uint))
@@ -40,6 +47,11 @@
 
 (define-private (is-valid-project-id (project-id uint))
     (< project-id (var-get project-counter)))
+
+(define-private (is-active (project uint))
+    (let ((project-data (unwrap! (map-get? projects project) false)))
+        (is-eq (get status project-data) STATUS-ACTIVE)
+    ))
 
 (define-public (create-project (goal uint) (milestones uint))
     (begin
@@ -52,7 +64,8 @@
                     goal: goal, 
                     funds-raised: u0, 
                     milestones: milestones, 
-                    milestones-met: u0, 
+                    milestones-met: u0,
+                    status: STATUS-ACTIVE,
                     refunded: false
                 })
                 (var-set project-counter (+ id u1))
@@ -66,6 +79,7 @@
     (begin
         (asserts! (is-valid-project-id project-id) ERR_INVALID_PROJECT_ID)
         (asserts! (> amount u0) ERR_INVALID_AMOUNT)
+        (asserts! (is-active project-id) ERR_INVALID_STATUS)
         (let ((project (unwrap! (map-get? projects project-id) ERR_PROJECT_NOT_FOUND)))
             (let ((funds-raised (get funds-raised project)))
                 (if (< funds-raised (get goal project))
@@ -87,15 +101,23 @@
 (define-public (complete-milestone (project-id uint))
     (begin
         (asserts! (is-valid-project-id project-id) ERR_INVALID_PROJECT_ID)
+        (asserts! (is-active project-id) ERR_INVALID_STATUS)
         (let ((project (unwrap! (map-get? projects project-id) ERR_PROJECT_NOT_FOUND)))
             (asserts! (is-eq tx-sender (get creator project)) ERR_NOT_AUTHORIZED)
             (let ((milestones-met (get milestones-met project))
                   (milestones (get milestones project)))
                 (if (< milestones-met milestones)
-                    (begin
-                        (map-set projects project-id (merge project {milestones-met: (+ milestones-met u1)}))
-                        (ok true)
-                    )
+                    (let ((new-milestones-met (+ milestones-met u1)))
+                        (begin
+                            (map-set projects project-id 
+                                (merge project {
+                                    milestones-met: new-milestones-met,
+                                    status: (if (is-eq new-milestones-met milestones) 
+                                              STATUS-COMPLETED 
+                                              STATUS-ACTIVE)
+                                }))
+                            (ok true)
+                        ))
                     ERR_MILESTONES_NOT_MET
                 )
             )
@@ -108,6 +130,7 @@
         (asserts! (is-valid-project-id project-id) ERR_INVALID_PROJECT_ID)
         (let ((project (unwrap! (map-get? projects project-id) ERR_PROJECT_NOT_FOUND)))
             (asserts! (is-eq tx-sender (get creator project)) ERR_NOT_AUTHORIZED)
+            (asserts! (is-eq (get status project) STATUS-COMPLETED) ERR_MILESTONES_NOT_MET)
             (let ((milestones-met (get milestones-met project))
                   (goal (get goal project))
                   (funds-raised (get funds-raised project)))
@@ -130,12 +153,16 @@
     (begin
         (asserts! (is-valid-project-id project-id) ERR_INVALID_PROJECT_ID)
         (let ((project (unwrap! (map-get? projects project-id) ERR_PROJECT_NOT_FOUND)))
-            (if (and (not (get refunded project)) 
-                     (< (get milestones-met project) (get milestones project)))
+            (asserts! (is-eq (get status project) STATUS-ACTIVE) ERR_INVALID_STATUS)
+            (if (< (get milestones-met project) (get milestones project))
                 (let ((contribution (unwrap! (map-get? contributions {project-id: project-id, funder: tx-sender}) ERR_PROJECT_FAILED)))
                     (begin
                         (try! (stx-transfer? contribution (get creator project) tx-sender))
-                        (map-set projects project-id (merge project {refunded: true}))
+                        (map-set projects project-id 
+                            (merge project {
+                                status: STATUS-REFUNDED,
+                                refunded: true
+                            }))
                         (ok true)
                     )
                 )
