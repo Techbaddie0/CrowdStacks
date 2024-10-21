@@ -6,6 +6,9 @@
 (define-constant STATUS-REFUNDED u3)
 (define-constant STATUS-EXPIRED u4)
 
+;; Additional error constant for deadline validation
+(define-constant ERR_INVALID_DEADLINE (err u111))
+
 (define-map projects 
     uint 
     {
@@ -48,6 +51,12 @@
 (define-private (is-valid-milestones (milestones uint))
     (and (> milestones u0) (<= milestones u10)))
 
+(define-private (is-valid-deadline (deadline uint))
+    (and 
+        (> deadline u0)
+        (<= deadline u52560) ;; Max 1 year in blocks (assuming 10-minute blocks)
+    ))
+
 (define-private (is-valid-project-id (project-id uint))
     (< project-id (var-get project-counter)))
 
@@ -64,6 +73,7 @@
     (begin
         (asserts! (is-valid-goal goal) ERR_INVALID_GOAL)
         (asserts! (is-valid-milestones milestones) ERR_INVALID_MILESTONES)
+        (asserts! (is-valid-deadline deadline) ERR_INVALID_DEADLINE)
         (let ((id (var-get project-counter)))
             (map-set projects id {
                 creator: tx-sender, 
